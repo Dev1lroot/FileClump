@@ -40,6 +40,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <cmath>
+
 #include "Common.h"
 #include "Models.h"
 #include "Treemap.h"
@@ -84,6 +86,17 @@ QFrame* panel()
     f->setFrameShape(QFrame::StyledPanel);
     f->setFrameShadow(QFrame::Sunken);
     return f;
+}
+
+const QColor kUsedColor(30, 110, 255);
+const QColor kFreeColor(210, 210, 210);
+const QColor kReservedColor(150, 150, 150);
+
+QLabel* swatchLabel(const QString& text, const QColor& c)
+{
+    auto* l = new QLabel(QStringLiteral("<span style=\"color:%1\">&#9632;</span> %2").arg(c.name(), text));
+    l->setTextFormat(Qt::RichText);
+    return l;
 }
 
 bool skipFs(const QByteArray& t)
@@ -212,6 +225,56 @@ implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 }
 
 } // namespace
+
+// Used / free / reserved pie for the selected volume.
+class SpacePie : public QWidget {
+public:
+    SpacePie()
+    {
+        setFixedSize(64, 64);
+    }
+    void setValues(quint64 used, quint64 freeB, quint64 reserved)
+    {
+        m_used = used;
+        m_free = freeB;
+        m_reserved = reserved;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF r = QRectF(rect()).adjusted(2, 2, -2, -2);
+        p.setPen(QPen(palette().color(QPalette::Mid), 1));
+        const double total = double(m_used) + double(m_free) + double(m_reserved);
+        if (total <= 0) {
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(r);
+            return;
+        }
+        // Qt angles are 1/16 degree, counter-clockwise from 3 o'clock; start at 12 and go clockwise.
+        int start = 90 * 16;
+        auto slice = [&](quint64 v, const QColor& c) {
+            const int span = -int(std::lround(double(v) / total * 5760.0));
+            if (span == 0)
+                return;
+            p.setBrush(c);
+            if (span <= -5760)
+                p.drawEllipse(r);
+            else
+                p.drawPie(r, start, span);
+            start += span;
+        };
+        slice(m_used, kUsedColor);
+        slice(m_reserved, kReservedColor);
+        slice(m_free, kFreeColor);
+    }
+
+private:
+    quint64 m_used = 0, m_free = 0, m_reserved = 0;
+};
 
 MainWindow::MainWindow()
 {
@@ -454,7 +517,8 @@ QWidget* MainWindow::buildTopPanel()
     const char* labels[] = {"Selection:", "Total Space:", "Space Used:", "Space Free:"};
     QLabel** values[] = {&m_selValue, &m_totalValue, &m_usedValue, &m_freeValue};
     for (int i = 0; i < 4; ++i) {
-        mg->addWidget(new QLabel(QString::fromLatin1(labels[i])), i, 0);
+        const QString text = QString::fromLatin1(labels[i]);
+        mg->addWidget(i == 2 ? swatchLabel(text, kUsedColor) : i == 3 ? swatchLabel(text, kFreeColor) : new QLabel(text), i, 0);
         auto* val = new QLabel(QStringLiteral("-"));
         QFont f = val->font();
         f.setBold(true);
@@ -464,6 +528,9 @@ QWidget* MainWindow::buildTopPanel()
         mg->addWidget(val, i, 1);
         *values[i] = val;
     }
+    m_pie = new SpacePie;
+    mg->addWidget(m_pie, 0, 2, 4, 1, Qt::AlignCenter);
+    mg->setColumnStretch(1, 1);
     h->addWidget(mid, 3);
 
     // Branding
@@ -742,6 +809,8 @@ void MainWindow::updateSpaceInfo(const QString& path)
         m_totalValue->setText(QStringLiteral("-"));
         m_usedValue->setText(QStringLiteral("-"));
         m_freeValue->setText(QStringLiteral("-"));
+        m_pie->setValues(0, 0, 0);
+        m_pie->setToolTip(QString());
         return;
     }
     const double total = double(si.bytesTotal());
@@ -751,6 +820,12 @@ void MainWindow::updateSpaceInfo(const QString& path)
     m_totalValue->setText(fmtSize(quint64(si.bytesTotal())));
     m_usedValue->setText(QStringLiteral("%1  (%2)").arg(fmtSize(used), pct(double(used))));
     m_freeValue->setText(QStringLiteral("%1  (%2)").arg(fmtSize(freeB), pct(double(freeB))));
+    const quint64 reserved = quint64(si.bytesFree()) - freeB;
+    m_pie->setValues(used, freeB, reserved);
+    QString tip = QStringLiteral("Used: %1 (%2)\nFree: %3 (%4)").arg(fmtSize(used), pct(double(used)), fmtSize(freeB), pct(double(freeB)));
+    if (reserved)
+        tip += QStringLiteral("\nReserved: %1 (%2)").arg(fmtSize(reserved), pct(double(reserved)));
+    m_pie->setToolTip(tip);
 }
 
 void MainWindow::updateStatus(const std::vector<Node*>& nodes)

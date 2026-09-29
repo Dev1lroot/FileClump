@@ -23,6 +23,7 @@ class QTabWidget;
 class QTimer;
 class QTreeView;
 class ExtModel;
+class SpacePie;
 class FileListModel;
 class Treemap;
 class TreeModel;
@@ -70,6 +71,7 @@ private:
     QLabel* m_scanStatus = nullptr;
     QProgressBar* m_progress = nullptr;
     QLabel *m_selValue = nullptr, *m_totalValue = nullptr, *m_usedValue = nullptr, *m_freeValue = nullptr;
+    SpacePie* m_pie = nullptr;
 
     QTabWidget* m_tabs = nullptr;
     QTreeView* m_tree = nullptr;
